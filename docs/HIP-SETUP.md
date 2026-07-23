@@ -93,6 +93,7 @@ build enables them via `-DCOLI_CUDA` through `backend_gpu_compat.h`.
 | `COLI_CUDA_TC_INT4` | 0 | INT4 tensor-core path (WMMA — NVIDIA only, no-op on HIP) |
 | `COLI_CUDA_TC_W4A16` | 0 | W4A16 tensor-core path (WMMA — NVIDIA only, no-op on HIP) |
 | `COLI_CUDA_TC_W4A16_MIN` | 16 | Min rows to dispatch W4A16 tensor cores |
+| `COLI_CUDA_W4_PACKED` | 1 | Use W4A32 packed expert kernels |
 | `COLI_CUDA_DUAL_PROJ` | 1 | Fused gate+up projection |
 | `COLI_CUDA_ASYNC` | 1 | Async expert group transfers |
 | `COLI_CUDA_RESID` | 0 | Expert-group results stay on device |
