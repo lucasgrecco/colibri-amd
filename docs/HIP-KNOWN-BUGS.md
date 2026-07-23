@@ -1,8 +1,8 @@
 # HIP Known Bugs — Colibrì AMD GPU Backend
 
 This file tracks bugs discovered during HIP backend development and testing.
-Each entry includes discovery date, ROCm version, GPU model, symptoms, root cause,
-workaround, fix commit, and regression test.
+The HIP backend shares source with CUDA via `backend_gpu_compat.h` — the
+same `#ifdef COLI_CUDA` code path is compiled for both vendors.
 
 ---
 
@@ -10,63 +10,87 @@ workaround, fix commit, and regression test.
 
 ```markdown
 ## BUG-XXX: short description
-- **Descoberto:** YYYY-MM-DD
+- **Found:** YYYY-MM-DD
 - **ROCm:** X.Y
 - **GPU:** model
-- **Sintoma:** what the user sees
-- **Causa:** root cause analysis
+- **Symptom:** what the user sees
+- **Cause:** root cause analysis
 - **Workaround:** temporary fix
 - **Fix:** commit hash
-- **Teste de regressão:** test file and function
+- **Regression test:** test file and function
 ```
 
 ---
 
 ## Active Bugs
 
-_No bugs discovered yet. This file will be populated during testing._
+_No bugs discovered yet._
 
 ---
 
 ## Resolved Bugs
 
-_No bugs resolved yet._
+### BUG-001: PIE link error on gcc (hipcc object)
+- **Found:** 2026-07-15
+- **ROCm:** 6.16.13
+- **GPU:** RX 7900 XTX (gfx1100)
+- **Symptom:** `relocation R_X86_64_32 against '.rodata.str1.1' can not be used when making a PIE object`
+- **Cause:** gcc defaults to `-fPIE`; hipcc compiled `backend_cuda.o` without `-fPIE`, causing a link incompatibility
+- **Workaround:** `HIPCCFLAGS="... -fPIE" make colibri HIP=1`
+- **Fix:** `c05b65b` — added `-fPIE` to `HIPCCFLAGS` in `c/Makefile`
+- **Regression test:** `make colibri HIP=1 HIP_ARCH=gfx1100` (link must succeed)
+
+### BUG-002: GPU float matmul diverges from CPU (non-token-exact)
+- **Found:** 2026-07-15
+- **ROCm:** 6.16.13
+- **GPU:** RX 7900 XTX (gfx1100)
+- **Symptom:** GLM-5.2 int4 model on GPU produces different tokens than CPU (not token-exact; e.g. 9/32 vs 11/32 on oracle)
+- **Cause:** GPU float matmuls round differently than the CPU int8-dot (IDOT) kernels; same behavior documented in upstream issue #100. WMMA is disabled on HIP (`COLI_GPU_HAS_WMMA=0`)
+- **Workaround:** None in Phase 1. Use FP32 (16-bit) for token-exact match, or accept quantization noise on int4
+- **Fix:** Planned for Phase 2 (rocWMMA matrix-core support)
+- **Regression test:** `COLI_CUDA=1 COLI_GPU=0 CUDA_DENSE=1 SNAP=./glm_tiny TF=1 ./colibri 64 16 16` (expect 32/32 on FP32)
+
+### BUG-003: ./glm binary missing (renamed to colibri)
+- **Found:** 2026-07-15
+- **ROCm:** 6.16.13
+- **GPU:** RX 7900 XTX (gfx1100)
+- **Symptom:** `./glm: command not found` when running directly
+- **Cause:** Upstream renamed `glm.c` → `colibri.c`; the build target is now `colibri$(EXE)`. `./glm` is only a phony alias inside `make`
+- **Workaround:** Use `./colibri` directly, or `make colibri HIP=1` (not `make glm HIP=1`)
+- **Fix:** N/A (upstream change)
+- **Regression test:** N/A
 
 ---
 
 ## Debugging Tools
 
-### layer_diff.py
-Compare layer-by-layer output between CPU and HIP:
-```bash
-COLI_HIP=1 COLI_GPU=0 LAYER_DUMP=1 SNAP=./glm_tiny ./glm 64 16 16 2> hip_dump.txt
-LAYER_DUMP=1 SNAP=./glm_tiny ./glm 64 16 16 2> cpu_dump.txt
-python3 c/tools/layer_diff.py cpu_dump.txt hip_dump.txt
-```
-
 ### hip_debug.h
-Verbose HIP API logging:
-```bash
-# Build with debug checks
-HIPFLAGS="-DHIP_DEBUG" make glm HIP=1
 
-# Run — every HIP API call is checked and logged
-COLI_HIP=1 COLI_GPU=0 ./glm 64 16 16
+HIP API error-checking macros. To activate, include the header in
+`backend_cuda.cu` and build with `-DHIP_DEBUG`:
+
+```bash
+# Build with debug checks (after adding #include "hip_debug.h" to backend_cuda.cu)
+HIPCCFLAGS="-O1 -g -fsanitize=address -fno-omit-frame-pointer -DHIP_DEBUG" \
+  make colibri HIP=1 HIP_ARCH=gfx1100
 ```
 
-### Sanitizers
-```bash
-# Address Sanitizer
-HIPFLAGS="-O1 -g -fsanitize=address -fno-omit-frame-pointer" make glm HIP=1
-./tests/test_backend_hip
-
-# Undefined Behavior Sanitizer
-HIPFLAGS="-O1 -g -fsanitize=undefined" make glm HIP=1
-./tests/test_backend_hip
-```
+**Note:** `hip_debug.h` is currently NOT included by `backend_cuda.cu`.
+To use it, add `#include "hip_debug.h"` near the top of `backend_cuda.cu`
+(replacing the existing `#include` of `backend_gpu_compat.h`), then wrap
+critical HIP calls with `HIP_CHECK(...)`.
 
 ### Profiling
+
 ```bash
-# Enable H2D/kernel/D2H timing
-COLI_HIP=1 COLI_GPU=0 COLI_HIP_PROFILE=1 ./glm 64 16 16
+# Enable H2D/kernel/D2H timing breakdown
+COLI_CUDA=1 COLI_GPU=0 COLI_CUDA_PROFILE=1 ./colibri 64 16 16
+```
+
+### GPU memory info
+
+```bash
+# Check VRAM usage during inference
+COLI_CUDA=1 COLI_GPU=0 CUDA_DENSE=1 CUDA_EXPERT_GB=14 ./colibri run "test"
+# Watch for: [CUDA] resident set: N tensors, X.XX GB VRAM
 ```

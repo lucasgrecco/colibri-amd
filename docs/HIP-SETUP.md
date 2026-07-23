@@ -4,7 +4,7 @@
 
 - **AMD GPU**: RX 7900 XTX (RDNA3, gfx1100) or compatible
 - **ROCm 6.x**: Official AMD GPU compute stack
-- **OS**: Ubuntu 22.04 or 24.04 (ROCm officially supported)
+- **OS**: Linux (Ubuntu 22.04 or 24.04 recommended)
 
 ## 1. Install ROCm
 
@@ -19,8 +19,8 @@ echo 'export PATH=/opt/rocm/bin:$PATH' >> ~/.bashrc
 source ~/.bashrc
 
 # Verify installation
-rocminfo
-hipconfig --full
+rocminfo | grep -A5 "Agent 2"
+hipcc --version
 ```
 
 ## 2. Build Colibrì with HIP
@@ -28,85 +28,92 @@ hipconfig --full
 ```bash
 cd c
 
-# Build with HIP for RX 7900 XTX
-make glm HIP=1 HIP_ARCH=gfx1100
+# Build with HIP for RX 7900 XTX (gfx1100)
+make colibri HIP=1 HIP_ARCH=gfx1100
 
 # Other common targets:
-#   make glm HIP=1 HIP_ARCH=gfx1030   # RX 6900 XT (RDNA2)
-#   make glm HIP=1 HIP_ARCH=gfx942    # MI300X (CDNA3)
-#   make glm HIP=1 HIP_ARCH=gfx90a    # MI250X (CDNA2)
-```
+#   make colibri HIP=1 HIP_ARCH=gfx1030   # RX 6900 XT (RDNA2)
+#   make colibri HIP=1 HIP_ARCH=gfx942      # MI300X (CDNA3)
+#   make colibri HIP=1 HIP_ARCH=gfx90a      # MI250X (CDNA2)
+#   make colibri HIP=1 HIP_ARCH=native      # Auto-detect local GPU
 
-## 3. Run Tests
-
-```bash
-# Unit tests (requires GPU)
+# Run unit tests on the GPU
 make hip-test HIP=1 HIP_ARCH=gfx1100
-
-# Oracle validation (token-exact match)
-python3 tools/make_glm_oracle.py
-COLI_HIP=1 COLI_GPU=0 SNAP=./glm_tiny TF=1 ./glm 64 16 16
-# Expected: "32/32 positions match"
-
-COLI_HIP=1 COLI_GPU=0 SNAP=./glm_tiny ./glm 64 16 16
-# Expected: "20/20 tokens match"
-
-# Python integration tests
-COLI_HIP=1 COLI_GPU=0 python3 -m pytest tests/test_hip_server.py -v
 ```
 
-## 4. Run Inference
+## 3. Run Inference
+
+The HIP build uses the same env vars as the CUDA backend — the HIP
+build defines `-DCOLI_CUDA`, so all `#ifdef COLI_CUDA` code paths
+are active and call the HIP runtime via `backend_gpu_compat.h`.
 
 ```bash
 # Chat with HIP backend
-COLI_HIP=1 COLI_GPU=0 COLI_MODEL=/path/to/glm52_i4 ./coli chat
+COLI_CUDA=1 COLI_GPU=0 CUDA_DENSE=1 \
+  COLI_MODEL=/path/to/glm52_i4 ./coli chat
 
 # Serve API with HIP
-COLI_HIP=1 COLI_GPU=0 COLI_MODEL=/path/to/glm52_i4 ./coli serve --host 127.0.0.1 --port 8000
+COLI_CUDA=1 COLI_GPU=0 CUDA_DENSE=1 \
+  COLI_MODEL=/path/to/glm52_i4 ./coli serve --host 127.0.0.1 --port 8000
 
-# Benchmark
-COLI_HIP=1 COLI_GPU=0 COLI_MODEL=/path/to/glm52_i4 ./coli bench
+# One-shot generation
+COLI_CUDA=1 COLI_GPU=0 CUDA_DENSE=1 CUDA_EXPERT_GB=14 \
+  COLI_MODEL=/path/to/glm52_i4 ./coli run "What is 2+2?"
+```
+
+## 4. Oracle Validation (token-exact match)
+
+```bash
+# Create the oracle model (requires torch + transformers)
+python3 tools/make_glm_oracle.py
+
+# Teacher-forcing: expect "32/32 positions match"
+COLI_CUDA=1 COLI_GPU=0 CUDA_DENSE=1 SNAP=./glm_tiny TF=1 ./colibri 64 16 16
+
+# Greedy: expect "20/20 tokens match"
+COLI_CUDA=1 COLI_GPU=0 CUDA_DENSE=1 SNAP=./glm_tiny ./colibri 64 16 16
 ```
 
 ## 5. Environment Variables
 
+These are the same variables used by the CUDA backend — the HIP
+build enables them via `-DCOLI_CUDA` through `backend_gpu_compat.h`.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `COLI_HIP` | off | Enable HIP backend |
-| `COLI_GPU` | (empty) | HIP device ordinal (e.g., `0`) |
-| `COLI_GPUS` | (empty) | Multi-GPU list (e.g., `0,1`) — Phase 2+ |
-| `HIP_DENSE` | 0 | Upload dense tensors to GPU |
-| `HIP_EXPERT_GB` | 0 | VRAM budget for experts (e.g., `20`) |
-| `HIP_RELEASE_HOST` | 0 | Free host RAM after GPU upload |
-| `COLI_HIP_PIPE` | 0 | Resident pipeline (prefill attention on GPU) |
-| `COLI_HIP_PROFILE` | 0 | Enable H2D/kernel/D2H timing |
-| `COLI_HIP_W4_PACKED` | 1 | Use W4A32 packed expert kernels |
-| `COLI_HIP_DUAL_PROJ` | 1 | Fused gate+up projection |
-| `COLI_HIP_ASYNC` | 1 | Async expert group transfers |
+| `COLI_CUDA` | off | Enable the GPU backend (HIP build uses this, not `COLI_HIP`) |
+| `COLI_GPU` / `COLI_GPUS` | auto | Device selection: `0`, or `0,1` for multi-GPU |
+| `CUDA_DENSE` | 0 | Place dense (non-expert) tensors on the GPU |
+| `CUDA_EXPERT_GB` | 0 | VRAM budget (GB) for caching experts on the GPU |
+| `CUDA_RELEASE_HOST` | auto (1 if >1 device) | Release host-side copies after GPU upload |
+| `COLI_CUDA_ATTN` | off | Run S≤4 attention on the GPU |
+| `COLI_CUDA_ATTN_SHARD` | off | Shard the KV-b tensor across GPUs |
+| `COLI_CUDA_PIPE` | 0 | Resident pipeline (prefill attention on GPU) |
+| `COLI_CUDA_PROFILE` | 0 | Emit H2D/kernel/D2H timing |
+| `COLI_CUDA_TC_INT4` | 0 | INT4 tensor-core path (WMMA — NVIDIA only, no-op on HIP) |
+| `COLI_CUDA_TC_W4A16` | 0 | W4A16 tensor-core path (WMMA — NVIDIA only, no-op on HIP) |
+| `COLI_CUDA_TC_W4A16_MIN` | 16 | Min rows to dispatch W4A16 tensor cores |
+| `COLI_CUDA_DUAL_PROJ` | 1 | Fused gate+up projection |
+| `COLI_CUDA_ASYNC` | 1 | Async expert group transfers |
+| `COLI_CUDA_RESID` | 0 | Expert-group results stay on device |
 
 ## 6. Troubleshooting
 
 ### "hipcc not found"
-Install ROCm or set `HIPCC` to the full path:
 ```bash
-make glm HIP=1 HIPCC=/opt/rocm/bin/hipcc
+make colibri HIP=1 HIPCC=/opt/rocm/bin/hipcc
 ```
 
-### "HIP requested backend is unavailable"
-Check GPU visibility:
-```bash
-rocminfo | grep "Name"
-```
-Ensure the GPU is not in use by another process.
+### "COLI_GPU(S) requires COLI_CUDA=1"
+The HIP build defines `-DCOLI_CUDA` automatically. If you see this,
+you are running a CPU-only binary. Rebuild with `make colibri HIP=1`.
 
-### "invalid COLI_GPUS"
-Use comma-separated device ordinals:
-```bash
-COLI_HIP=1 COLI_GPUS=0,1 ./coli chat
-```
+### "relocation R_X86_64_32 ... can not be used when making a PIE object"
+This was a build bug fixed by adding `-fPIE` to `HIPCCFLAGS` in the
+Makefile. If you hit this, ensure your branch includes that fix.
 
 ### Performance tuning
-- Start with `COLI_HIP_PROFILE=1` to see H2D/kernel/D2H timing
-- Increase `HIP_EXPERT_GB` to cache more experts in VRAM
-- Enable `HIP_DENSE=1` to keep dense tensors on GPU
-- For prefill-heavy workloads, try `COLI_HIP_PIPE=1`
+- `COLI_CUDA_PROFILE=1` — see H2D/kernel/D2H timing breakdown
+- `CUDA_EXPERT_GB=N` — cache more experts in VRAM (e.g. 14 for a 24 GB card)
+- `CUDA_DENSE=1` — keep dense tensors on GPU
+- `COLI_CUDA_PIPE=1` — resident pipeline for prefill-heavy workloads
