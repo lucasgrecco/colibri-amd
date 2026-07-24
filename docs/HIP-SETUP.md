@@ -90,8 +90,8 @@ build enables them via `-DCOLI_CUDA` through `backend_gpu_compat.h`.
 | `COLI_CUDA_ATTN_SHARD` | off | Shard the KV-b tensor across GPUs |
 | `COLI_CUDA_PIPE` | 0 | Resident pipeline (prefill attention on GPU) |
 | `COLI_CUDA_PROFILE` | 0 | Emit H2D/kernel/D2H timing |
-| `COLI_CUDA_TC_INT4` | 0 | INT4 tensor-core path (WMMA — NVIDIA only, no-op on HIP) |
-| `COLI_CUDA_TC_W4A16` | 0 | W4A16 tensor-core path (WMMA — NVIDIA only, no-op on HIP) |
+| `COLI_CUDA_TC_INT4` | 0 | INT4 tensor-core path (WMMA — **no-op on HIP**, rocWMMA has no `precision::s4`. Falls back to `quant_matmul`) |
+| `COLI_CUDA_TC_W4A16` | 0 | W4A16 tensor-core path. **Ativo em HIP** via rocWMMA (FP16 16×16×16). Set `=1` to enable |
 | `COLI_CUDA_TC_W4A16_MIN` | 16 | Min rows to dispatch W4A16 tensor cores |
 | `COLI_CUDA_W4_PACKED` | 1 | Use W4A32 packed expert kernels |
 | `COLI_CUDA_DUAL_PROJ` | 1 | Fused gate+up projection |

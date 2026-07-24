@@ -8,17 +8,24 @@
  *
  * COLI_GPU_HAS_WMMA: the WMMA tensor-core kernels are guarded by
  * __CUDA_ARCH__ >= 700 (device side) and by this flag at the host dispatch
- * sites. Under HIP the flag is 0: gfx GPUs report compute_major >= 7, so a
- * runtime-only check would select empty kernel bodies. Matrix-core support
- * via rocWMMA is a possible follow-up; until then HIP always uses the
- * portable kernels. */
+ * sites. Under HIP, __CUDA_ARCH__ is not defined by hipcc, so we define it
+ * here to 1100 (gfx1100 = RDNA3) to activate the WMMA kernel bodies.
+ * rocWMMA provides float16_t and the fragment/mma_sync API; the CUDA
+ * __half and nvcuda::wmma names are mapped to their rocWMMA equivalents.
+ * Note: grouped_s4_wmma uses wmma::experimental::precision::s4 (4-bit)
+ * which has no rocWMMA equivalent — that kernel stays a no-op under HIP
+ * and falls back to quant_matmul. */
 #ifndef COLIBRI_BACKEND_GPU_COMPAT_H
 #define COLIBRI_BACKEND_GPU_COMPAT_H
 
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIP__)
 #include <hip/hip_runtime.h>
 #include <hip/hip_fp16.h>
-#define COLI_GPU_HAS_WMMA        0
+#include <rocwmma/rocwmma.hpp>
+#define COLI_GPU_HAS_WMMA        1
+#define __CUDA_ARCH__            700
+#define __half                  rocwmma::float16_t
+namespace nvcuda { namespace wmma = ::rocwmma; }
 #define cudaError_t              hipError_t
 #define cudaSuccess              hipSuccess
 #define cudaGetErrorString       hipGetErrorString

@@ -40,15 +40,15 @@ _No bugs discovered yet._
 - **Fix:** `c05b65b` — added `-fPIE` to `HIPCCFLAGS` in `c/Makefile`
 - **Regression test:** `make colibri HIP=1 HIP_ARCH=gfx1100` (link must succeed)
 
-### BUG-002: GPU float matmul diverges from CPU (non-token-exact)
+### BUG-002: GPU float matmul diverges from CPU (non-token-exact) — partially resolved
 - **Found:** 2026-07-15
 - **ROCm:** 6.16.13
 - **GPU:** RX 7900 XTX (gfx1100)
 - **Symptom:** GLM-5.2 int4 model on GPU produces different tokens than CPU (not token-exact; e.g. 9/32 vs 11/32 on oracle)
-- **Cause:** GPU float matmuls round differently than the CPU int8-dot (IDOT) kernels; same behavior documented in upstream issue #100. WMMA is disabled on HIP (`COLI_GPU_HAS_WMMA=0`)
-- **Workaround:** None in Phase 1. Use FP32 (16-bit) for token-exact match, or accept quantization noise on int4
-- **Fix:** Planned for Phase 2 (rocWMMA matrix-core support)
-- **Regression test:** `COLI_CUDA=1 COLI_GPU=0 CUDA_DENSE=1 SNAP=./glm_tiny TF=1 ./colibri 64 16 16` (expect 32/32 on FP32)
+- **Cause:** GPU float matmuls round differently than the CPU int8-dot (IDOT) kernels; same behavior documented in upstream issue #100. WMMA was disabled on HIP (`COLI_GPU_HAS_WMMA=0`)
+- **Workaround:** Use FP32 (16-bit) for token-exact match, or accept quantization noise on int4
+- **Fix:** Partially resolved in Phase 2. `COLI_CUDA_TC_W4A16=1` now activates the W4A16 tensor-core path via rocWMMA (FP16 16×16×16). The `grouped_s4_wmma` kernel (INT4, 8×8×32) remains a no-op because rocWMMA has no `precision::s4` — it falls back to `quant_matmul`. Measured: expert-matmul dropped 34% (98.6s → 65.4s)
+- **Regression test:** `COLI_CUDA=1 COLI_GPU=0 CUDA_DENSE=1 COLI_CUDA_TC_W4A16=1 SNAP=./glm_tiny TF=1 ./colibri 64 16 16` (expect 32/32 on FP32)
 
 ### BUG-003: ./glm binary missing (renamed to colibri)
 - **Found:** 2026-07-15
